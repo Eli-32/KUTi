@@ -3,9 +3,30 @@ import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import { watch } from 'fs';
 import { pathToFileURL } from 'url';
+import express from 'express';
 
 // Global variable to store the current bot instance
 let currentAnimeBot = null;
+
+// Create Express server
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Add uptime endpoint
+app.get('/', (req, res) => {
+  const status = currentAnimeBot ? currentAnimeBot.getStatus() : { status: 'initializing' };
+  res.json({
+    status: 'online',
+    botStatus: status,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Start Express server
+app.listen(PORT, () => {
+  console.log(`🌐 Web server running on port ${PORT}`);
+  console.log(`📡 Uptime URL: http://localhost:${PORT}/`);
+});
 
 console.log('🚀 Starting Anime Character Detector Bot...');
 
