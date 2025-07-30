@@ -1,0 +1,16 @@
+{
+    "name": "anime-detector-minimal",
+    "version": "1.0.0",
+    "description": "Minimal anime character detector bot",
+    "main": "anime-bot.js",
+    "type": "module",
+    "dependencies": {
+      "@whiskeysockets/baileys": "^6.7.8",
+      "axios": "^1.10.0",
+      "qrcode-terminal": "^0.12.0",
+      "pino": "^9.7.0"
+    },
+    "scripts": {
+      "start": "node anime-bot.js"
+    }
+  }
