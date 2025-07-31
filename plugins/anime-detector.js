@@ -59,11 +59,11 @@ class AnimeCharacterBot {
     }
 
     getAdaptiveDelay(characterCount = 1) {
-        const baseDelay = 700; // Increased from 50 to 2000ms (2 seconds)
-        const perCharacterDelay = 200; // Increased from 100 to 500ms
+        const baseDelay = 800; // Increased from 50 to 2000ms (2 seconds)
+        const perCharacterDelay = 300; // Increased from 100 to 500ms
         const randomVariation = Math.floor(Math.random() * 1000); // Increased random variation
         const calculatedDelay = baseDelay + ((characterCount - 1) * perCharacterDelay) + randomVariation;
-        return calculatedDelay * 0.2; // Increased multiplier from 1.1 to 1.5
+        return calculatedDelay * 0.3; // Increased multiplier from 1.1 to 1.5
     }
 
     async searchSingleAPI(apiUrl, characterName) {
