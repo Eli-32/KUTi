@@ -421,7 +421,7 @@ class WhatsAppAnimeBot {
                         if (selectedIndex >= 0 && selectedIndex < groups.length) {
                             this.selectedGroup = groups[selectedIndex].id;
                             this.isActive = true;
-                            this.activationTimestamp = Date.now(); // Set activation timestamp
+                            this.activationTimestamp = message.messageTimestamp; // Set activation timestamp to the message's timestamp (in seconds)
                             await this.sock.sendMessage(chatId, {
                                 text: `✅ Bot activated in: **${groups[selectedIndex].name}**\n\nNow the bot will only respond in this group.`
                             });
@@ -439,33 +439,22 @@ class WhatsAppAnimeBot {
                     }
                     
                     // The character detection logic ONLY runs if the bot is active and in the selected group
-                    if (!this.isActive) continue;
-                    
-                    // Check if message is from the selected group
-                    if (this.selectedGroup && chatId !== this.selectedGroup) {
-                        continue;
+                    if (this.isActive && this.selectedGroup && chatId === this.selectedGroup && message.messageTimestamp >= this.activationTimestamp) {
+                        // Ultra clean logging - only show actual messages
+                        console.log(`${message.pushName || chatId.split('@')[0]}: ${msgContent}`);
+                        
+                        // Add to message queue for processing with rate limiting
+                        this.messageQueue.push({
+                            text: msgContent,
+                            chatId: chatId,
+                            timestamp: Date.now()
+                        });
+                        
+                        // Process queue if not already processing
+                        if (!this.isProcessingQueue) {
+                            this.processMessageQueue();
+                        }
                     }
-                    
-                    // Only process messages sent after the bot was activated in this group
-                    if (message.messageTimestamp * 1000 < this.activationTimestamp) {
-                        continue;
-                    }
-
-                    // Ultra clean logging - only show actual messages
-                    console.log(`${message.pushName || chatId.split('@')[0]}: ${msgContent}`);
-                    
-                    // Add to message queue for processing with rate limiting
-                    this.messageQueue.push({
-                        text: msgContent,
-                        chatId: chatId,
-                        timestamp: Date.now()
-                    });
-                    
-                    // Process queue if not already processing
-                    if (!this.isProcessingQueue) {
-                        this.processMessageQueue();
-                    }
-                    
                 } catch (error) {
                     // Silent error handling
                 }
