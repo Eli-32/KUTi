@@ -7,6 +7,9 @@ import express from 'express';
 
 // Global variable to store the current bot instance
 let currentAnimeBot = null;
+let badMacErrorCount = 0; // Counter for Bad MAC errors
+const BAD_MAC_ERROR_THRESHOLD = 3; // Threshold for triggering session reset
+let sock = null; // Global variable to store the WhatsApp socket instance
 
 // Create Express server
 const app = express();
@@ -128,7 +131,7 @@ async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('./AnimeSession');
   
   // Create WhatsApp socket with better configuration
-  const sock = makeWASocket({
+  sock = makeWASocket({ // Assign to global sock variable
     auth: state,
     printQRInTerminal: false,
     logger: pino({ level: 'silent' }),
@@ -151,6 +154,21 @@ async function startBot() {
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('❌ Connection closed due to:', lastDisconnect?.error?.output?.statusCode || 'Unknown');
+
+      // Check for Bad MAC error and increment counter
+      if (lastDisconnect?.error?.message?.includes('Bad MAC')) {
+        badMacErrorCount++;
+        console.log(`⚠️ Bad MAC error detected. Consecutive errors: ${badMacErrorCount}`);
+        if (badMacErrorCount >= BAD_MAC_ERROR_THRESHOLD) {
+          console.log('🚨 Bad MAC error threshold reached. Resetting session...');
+          await cleanupSession(); // Clean up session files
+          badMacErrorCount = 0; // Reset counter after cleanup
+          setTimeout(startBot, 1000); // Reconnect immediately after cleanup
+          return; // Prevent further processing of this disconnect
+        }
+      } else {
+        badMacErrorCount = 0; // Reset counter if error is not Bad MAC
+      }
       
       if (shouldReconnect) {
         console.log('🔄 Reconnecting in 3 seconds...');
