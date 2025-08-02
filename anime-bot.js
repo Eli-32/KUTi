@@ -7,9 +7,6 @@ import express from 'express';
 
 // Global variable to store the current bot instance
 let currentAnimeBot = null;
-let badMacErrorCount = 0; // Counter for Bad MAC errors
-const BAD_MAC_ERROR_THRESHOLD = 3; // Threshold for triggering session reset
-let sock = null; // Global variable to store the WhatsApp socket instance
 
 // Create Express server
 const app = express();
@@ -32,30 +29,22 @@ app.listen(PORT, () => {
 });
 
 console.log('🚀 Starting Anime Character Detector Bot...');
-console.log('Type ".a" to activate the bot and select a group.');
-console.log('Type ".x" to deactivate the bot.');
-console.log('Type ".status" to check the bot\'s current status.');
 
 // Clean session function
-async function cleanupSession(force = false) {
+async function cleanupSession() {
   try {
     const fs = await import('fs');
     const sessionDir = './AnimeSession';
     if (fs.existsSync(sessionDir)) {
       const files = fs.readdirSync(sessionDir);
       files.forEach(file => {
-        if (file.endsWith('.json') && file !== 'creds.json') { // Exclude creds.json
+        if (file.endsWith('.json')) {
           const filePath = `${sessionDir}/${file}`;
-          if (force) {
+          const stats = fs.statSync(filePath);
+          // Remove files older than 24 hours
+          if (Date.now() - stats.mtimeMs > 24 * 60 * 60 * 1000) {
             fs.unlinkSync(filePath);
-            console.log(`🗑️ Force cleaned up session file: ${file}`);
-          } else {
-            const stats = fs.statSync(filePath);
-            // Remove files older than 24 hours
-            if (Date.now() - stats.mtimeMs > 24 * 60 * 60 * 1000) {
-              fs.unlinkSync(filePath);
-              console.log(`🗑️ Cleaned up old session file: ${file}`);
-            }
+            console.log(`🗑️ Cleaned up old session file: ${file}`);
           }
         }
       });
@@ -132,41 +121,21 @@ function setupHotReload(sock) {
 }
 
 async function startBot() {
-  // Kill any existing Node.js processes before starting
-  try {
-    console.log('Attempting to terminate any existing Node.js processes...');
-    const { exec } = await import('child_process'); // Import exec here
-    await new Promise(resolve => {
-      exec('taskkill /F /IM node.exe', (error, stdout, stderr) => {
-        if (error) {
-          console.log(`No Node.js processes found or error during termination: ${error.message}`);
-        }
-        if (stderr) {
-          console.log(`Taskkill stderr: ${stderr}`);
-        }
-        console.log(`Taskkill stdout: ${stdout}`);
-        resolve();
-      });
-    });
-  } catch (error) {
-    console.error('Error during process termination:', error.message);
-  }
-
   // Clean up old session files
-  await cleanupSession(true); // Force cleanup on startup
+  await cleanupSession();
   
   // Use multi-file auth state
   const { state, saveCreds } = await useMultiFileAuthState('./AnimeSession');
   
   // Create WhatsApp socket with better configuration
-  sock = makeWASocket({ // Assign to global sock variable
+  const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
-    logger: pino({ level: 'silent' }),
+    logger: pino({ level: 'error' }),
     browser: ['Anime Detector Bot', 'Chrome', '1.0.0'],
-    defaultQueryTimeoutMs: 60000,
-    connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 10000,
+    defaultQueryTimeoutMs: 120000,
+    connectTimeoutMs: 120000,
+    keepAliveIntervalMs: 20000,
     markOnlineOnConnect: true,
   });
 
@@ -182,21 +151,6 @@ async function startBot() {
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('❌ Connection closed due to:', lastDisconnect?.error?.output?.statusCode || 'Unknown');
-
-      // Check for Bad MAC error and increment counter
-      if (lastDisconnect?.error?.message?.includes('Bad MAC')) {
-        badMacErrorCount++;
-        console.log(`⚠️ Bad MAC error detected. Consecutive errors: ${badMacErrorCount}`);
-        if (badMacErrorCount >= BAD_MAC_ERROR_THRESHOLD) {
-          console.log('🚨 Bad MAC error threshold reached. Resetting session...');
-          await cleanupSession(); // Clean up session files
-          badMacErrorCount = 0; // Reset counter after cleanup
-          setTimeout(startBot, 1000); // Reconnect immediately after cleanup
-          return; // Prevent further processing of this disconnect
-        }
-      } else {
-        badMacErrorCount = 0; // Reset counter if error is not Bad MAC
-      }
       
       if (shouldReconnect) {
         console.log('🔄 Reconnecting in 3 seconds...');
@@ -232,6 +186,11 @@ async function startBot() {
             console.log(`📊 Status: ${status.status} | Characters learned: ${status.charactersLearned}`);
           }
         }, 300000); // Every 5 minutes
+
+        // Add a heartbeat log to confirm the bot is running
+        setInterval(() => {
+          console.log(`❤️ Bot heartbeat at ${new Date().toISOString()}`);
+        }, 60000); // Every 1 minute
       } else {
         console.error('❌ Failed to load anime bot plugin');
       }
@@ -242,23 +201,46 @@ async function startBot() {
   sock.ev.on('creds.update', saveCreds);
 }
 
-// Handle process termination gracefully
+// Anti-shutdown protection and graceful handling
+let isShuttingDown = false;
+
 process.on('SIGINT', () => {
-  console.log('\n⚠️ Received SIGINT, shutting down gracefully...');
-  process.exit(0);
+  if (!isShuttingDown) {
+    isShuttingDown = true;
+    console.log(`\n⚠️ Received SIGINT at ${new Date().toISOString()}, shutting down gracefully...`);
+    if (currentAnimeBot) {
+      currentAnimeBot.cleanup();
+    }
+    setTimeout(() => process.exit(0), 1000);
+  }
 });
 
 process.on('SIGTERM', () => {
-  console.log('\n⚠️ Received SIGTERM, shutting down gracefully...');
-  process.exit(0);
+  if (!isShuttingDown) {
+    isShuttingDown = true;
+    console.log(`\n⚠️ Received SIGTERM at ${new Date().toISOString()}, shutting down gracefully...`);
+    if (currentAnimeBot) {
+      currentAnimeBot.cleanup();
+    }
+    setTimeout(() => process.exit(0), 1000);
+  }
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
+  console.error(`❌ Uncaught Exception at ${new Date().toISOString()}:`, err);
+  // Don't exit immediately, try to recover
+  if (currentAnimeBot) {
+    currentAnimeBot.cleanup();
+  }
+  setTimeout(() => {
+    console.log('🔄 Attempting to restart bot after uncaught exception...');
+    startBot().catch(console.error);
+  }, 5000);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error(`❌ Unhandled Rejection at ${new Date().toISOString()} - Promise:`, promise, 'Reason:', reason);
+  // Don't exit, just log the error
 });
 
 // Start the bot

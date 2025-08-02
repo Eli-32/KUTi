@@ -17,41 +17,11 @@ class AnimeCharacterBot {
         this.arabicCharacterNames = new Map();
         this.characterMappingsPath = path.join(process.cwd(), 'plugins', 'character-mappings.json');
         this.loadCharacterMappings();
-        
-        // Rate limiting and protection features
-        this.messageQueue = [];
-        this.isProcessing = false;
-        this.lastMessageTime = 0;
-        this.consecutiveFailures = 0;
-        this.maxRetries = 3;
-        this.baseDelay = 1000;
-        this.maxDelay = 30000;
-        
-        // Anti-shutdown protection
-        this.heartbeatInterval = null;
-        this.startHeartbeat();
-    }
-
-    startHeartbeat() {
-        // Prevent process from being killed by keeping it alive
-        this.heartbeatInterval = setInterval(() => {
-            // Keep the process alive with a minimal heartbeat
-            if (process.uptime() > 0) {
-                // Process is alive, continue
-            }
-        }, 30000); // Every 30 seconds
-    }
-
-    stopHeartbeat() {
-        if (this.heartbeatInterval) {
-            clearInterval(this.heartbeatInterval);
-            this.heartbeatInterval = null;
-        }
-    }
-
-    getExponentialBackoffDelay() {
-        const delay = Math.min(this.baseDelay * Math.pow(2, this.consecutiveFailures), this.maxDelay);
-        return delay + Math.random() * 1000; // Add jitter
+        this.arabicKeyboardLayout = [
+            ['ض', 'ص', 'ث', 'ق', 'ف', 'غ', 'ع', 'ه', 'خ', 'ح', 'ج'],
+            ['ش', 'س', 'ي', 'ب', 'ل', 'ا', 'ت', 'ن', 'م', 'ك', 'ط'],
+            ['ذ', 'ئ', 'ء', 'ؤ', 'ر', 'ى', 'ة', 'و', 'ز', 'ظ', 'د']
+        ];
     }
 
     async loadCharacterMappings() {
@@ -69,6 +39,7 @@ class AnimeCharacterBot {
                 await this.saveCharacterMappings();
             }
         } catch (error) {
+            console.error(`❌ Error loading character mappings:`, error.message);
             this.arabicCharacterNames = new Map();
             this.learnedCharacters = new Map();
         }
@@ -83,16 +54,124 @@ class AnimeCharacterBot {
             };
             fs.writeFileSync(this.characterMappingsPath, JSON.stringify(mappings, null, 2), 'utf8');
         } catch (error) {
-            // Silent error handling
+            console.error(`❌ Error saving character mappings:`, error.message);
         }
     }
 
-    getAdaptiveDelay(characterCount = 1) {
-        const baseDelay = 800;
-        const perCharacterDelay = 300;
-        const randomVariation = Math.floor(Math.random() * 1000);
-        const calculatedDelay = baseDelay + ((characterCount - 1) * perCharacterDelay) + randomVariation;
-        return calculatedDelay * 0.3;
+    getAdaptiveDelay(characterCount = 1, isMistake = false, mistakeType = null) {
+        const baseDelay = 650; // Base delay for 1 character (10% faster: 722 * 0.9)
+        const perCharacterDelay = 650; // Each additional character adds this much time (10% faster: 722 * 0.9)
+        const randomVariation = Math.floor(Math.random() * 500); // Random variation
+        let calculatedDelay = baseDelay + ((characterCount - 1) * perCharacterDelay) + randomVariation;
+        
+        // If it's a delay mistake, make it much longer
+        if (isMistake && mistakeType === 'delay_mistake') {
+            calculatedDelay *= 3; // 3x longer for delay mistakes
+        }
+        
+        return calculatedDelay;
+    }
+
+    // 30% chance of making a mistake in processing
+    shouldMakeMistake() {
+        return Math.random() < 0; // 30% chance
+    }
+
+    // 50% chance of correcting a mistake after a delay
+    shouldCorrectMistake() {
+        return Math.random() < 0.5; // 50% chance
+    }
+
+    // Generate correction message - simple and direct
+    generateCorrectionMessage(originalCharacters) {
+        return originalCharacters.join(' ');
+    }
+
+    findKeyCoordinates(char) {
+        for (let r = 0; r < this.arabicKeyboardLayout.length; r++) {
+            const row = this.arabicKeyboardLayout[r];
+            const c = row.indexOf(char);
+            if (c > -1) {
+                return { r, c };
+            }
+        }
+        return null;
+    }
+
+    getNearbyKeys(char) {
+        const coords = this.findKeyCoordinates(char);
+        if (!coords) return [];
+
+        const { r, c } = coords;
+        const neighbors = [];
+        const rows = this.arabicKeyboardLayout.length;
+        
+        // Check adjacent keys (left, right, up, down)
+        const directions = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+
+        for (const [dr, dc] of directions) {
+            const nr = r + dr;
+            const nc = c + dc;
+
+            if (nr >= 0 && nr < rows && this.arabicKeyboardLayout[nr] && nc >= 0 && nc < this.arabicKeyboardLayout[nr].length) {
+                neighbors.push(this.arabicKeyboardLayout[nr][nc]);
+            }
+        }
+        return neighbors;
+    }
+
+    // Generate a mistake response - focus on typos
+    generateMistakeResponse(originalCharacters) {
+        const characters = [...originalCharacters];
+        
+        // 70% chance for typo, 30% chance for other mistakes
+        const isTypo = Math.random() < 0;
+        
+        if (isTypo) {
+            // Make a typo in one character based on keyboard proximity
+            const typoIndex = Math.floor(Math.random() * characters.length);
+            const originalWord = characters[typoIndex];
+            
+            if (originalWord.length > 1) {
+                const typoPos = Math.floor(Math.random() * originalWord.length);
+                const charToReplace = originalWord[typoPos];
+                
+                const nearbyKeys = this.getNearbyKeys(charToReplace);
+                
+                if (nearbyKeys.length > 0) {
+                    const typoChar = nearbyKeys[Math.floor(Math.random() * nearbyKeys.length)];
+                    characters[typoIndex] = originalWord.slice(0, typoPos) + typoChar + originalWord.slice(typoPos + 1);
+                }
+            }
+        } else {
+            // Other types of mistakes (less frequent)
+            const mistakeTypes = ['partial_response', 'reorder', 'delay_mistake'];
+            const mistakeType = mistakeTypes[Math.floor(Math.random() * mistakeTypes.length)];
+            
+            switch (mistakeType) {
+                case 'partial_response':
+                    // Only respond with some characters
+                    const keepCount = Math.max(1, Math.floor(characters.length * 0.7));
+                    const shuffled = [...characters].sort(() => Math.random() - 0.5);
+                    characters.splice(0, characters.length, ...shuffled.slice(0, keepCount));
+                    break;
+                    
+                case 'reorder':
+                    // Reorder the characters
+                    characters.sort(() => Math.random() - 0.5);
+                    break;
+                    
+                case 'delay_mistake':
+                    // This will be handled in the delay calculation
+                    break;
+            }
+        }
+        
+        return {
+            characters,
+            mistakeType: isTypo ? 'typo' : 'other',
+            isMistake: true
+        };
     }
 
     async searchSingleAPI(apiUrl, characterName) {
@@ -114,7 +193,13 @@ class AnimeCharacterBot {
                 const attrs = response.data.data[0].attributes;
                 return { name: attrs.name || attrs.canonicalName, confidence: 0.8, source: apiUrl.split('/')[2] };
             }
-        } catch (error) { /* Ignore API failures */ }
+        } catch (error) { 
+            // Rate limit protection - exponential backoff
+            if (error.response?.status === 429) {
+                const retryAfter = parseInt(error.response.headers['retry-after']) || 60;
+                await this.sleep(retryAfter * 1000);
+            }
+        }
         return null;
     }
 
@@ -129,19 +214,9 @@ class AnimeCharacterBot {
     async processMessage(message) {
         const messageText = message.body || '';
         if (!messageText.trim() || messageText === this.lastProcessedMessage) return null;
-        
-        // Check if message is recent (within 30 seconds)
-        const now = Date.now();
-        if (now - this.lastMessageTime < 30000) {
-            // Message is too recent, skip processing
-            return null;
-        }
-        
         const learnedCharacters = await this.extractPotentialCharacters(messageText);
         if (learnedCharacters.length === 0) return null;
-        
         this.lastProcessedMessage = messageText;
-        this.lastMessageTime = now;
         this.tournamentMode = this.isTournamentMessage(messageText);
         return { learnedCharacters, tournamentMode: this.tournamentMode, originalText: messageText };
     }
@@ -151,7 +226,24 @@ class AnimeCharacterBot {
     formatResponse(result) {
         if (!result || result.learnedCharacters.length === 0) return null;
         const characterNames = result.learnedCharacters.map(char => char.input);
-        return { text: characterNames.join(' '), characterCount: characterNames.length };
+        
+        // Check if we should make a mistake (30% chance)
+        if (this.shouldMakeMistake()) {
+            const mistakeResult = this.generateMistakeResponse(characterNames);
+            return { 
+                text: mistakeResult.characters.join(' '), 
+                characterCount: mistakeResult.characters.length,
+                isMistake: true,
+                mistakeType: mistakeResult.mistakeType,
+                originalCharacters: characterNames
+            };
+        }
+        
+        return { 
+            text: characterNames.join(' '), 
+            characterCount: characterNames.length,
+            isMistake: false
+        };
     }
 
     normalizeArabicText(text) {
@@ -160,52 +252,43 @@ class AnimeCharacterBot {
 
     extractContentBetweenAsterisks(text) {
         const matches = text.match(/\*([^*]+)\*/g);
-        return matches ? matches.map(m => m.slice(1, -1)).join(' ') : '';
-    }
-
-    // Enhanced emoji immunity with separator preservation
-    cleanTextPreservingSeparators(text) {
-        // Remove emojis but preserve separators
-        const emojiRegex = /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu;
-        return text.replace(emojiRegex, '').trim();
+        if (!matches) return '';
+        
+        // Extract content and remove emojis
+        const content = matches.map(m => m.slice(1, -1)).join(' ');
+        
+        // Remove emojis and other symbols, keep only Arabic text, English letters, and spaces
+        const cleanContent = content
+            .replace(/[\u{1F600}-\u{1F64F}]/gu, ' ') // Emoticons -> space
+            .replace(/[\u{1F300}-\u{1F5FF}]/gu, ' ') // Miscellaneous Symbols and Pictographs -> space
+            .replace(/[\u{1F680}-\u{1F6FF}]/gu, ' ') // Transport and Map Symbols -> space
+            .replace(/[\u{1F1E0}-\u{1F1FF}]/gu, ' ') // Regional Indicator Symbols -> space
+            .replace(/[\u{2600}-\u{26FF}]/gu, ' ') // Miscellaneous Symbols -> space
+            .replace(/[\u{2700}-\u{27BF}]/gu, ' ') // Dingbats -> space
+            .replace(/[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z\s]/g, ' ') // Keep only Arabic, English, and spaces
+            .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
+            .trim();
+        
+        return cleanContent;
     }
 
     async extractPotentialCharacters(text) {
         const content = this.extractContentBetweenAsterisks(text);
         if (!content.trim()) return [];
         
-        // Clean text while preserving separators
-        const cleanedContent = this.cleanTextPreservingSeparators(content);
-        if (!cleanedContent.trim()) return [];
+        // Simply split by spaces and return all words as characters
+        const separators = /[\s\/\-\|،,؛;:]+/g;
+        const words = content.split(separators).filter(Boolean);
         
-        // Split by separators but preserve them for reconstruction
-        const separators = /([\s\/\-\|،,؛;:]+)/g;
-        const parts = cleanedContent.split(separators);
+        // Return all words as potential characters (no filtering)
+        const potentialCharacters = words.map((word, index) => ({
+            input: word,
+            indices: [index],
+            confidence: 1.0,
+            isCharacter: true
+        }));
         
-        const potentialCharacters = [];
-        let currentIndex = 0;
-        
-        for (let i = 0; i < parts.length; i++) {
-            const part = parts[i].trim();
-            if (!part) continue;
-            
-            // Check if this part is a separator
-            if (separators.test(part)) {
-                currentIndex++;
-                continue;
-            }
-            
-            // This is a potential character
-            potentialCharacters.push({
-                input: part,
-                indices: [currentIndex],
-                confidence: 1.0,
-                isCharacter: true
-            });
-            currentIndex++;
-        }
-        
-        if (potentialCharacters.length > 0) this.saveCharacterMappings().catch(() => {});
+        if (potentialCharacters.length > 0) this.saveCharacterMappings().catch(console.error);
         return potentialCharacters;
     }
 
@@ -293,13 +376,10 @@ class WhatsAppAnimeBot {
         this.animeBot = new AnimeCharacterBot();
         this.isActive = false; // Bot starts as inactive by default
         this.selectedGroup = null; // Selected group to work in
-        this.activationTimestamp = 0; // Timestamp when the bot was activated in a group
         this.ownerNumbers = ['96176337375','966584646464','967771654273','967739279014']; // Add owner phone numbers here
         this.messageHandler = null;
         this.processedMessages = new Set();
-        this.lastMessageTime = 0;
-        this.messageQueue = [];
-        this.isProcessingQueue = false;
+        this.lastMessageTimestamp = 0; // Track the most recent message timestamp
         this.setupMessageHandler();
     }
 
@@ -319,66 +399,62 @@ class WhatsAppAnimeBot {
                 participants: group.participants?.length || 0
             }));
         } catch (error) {
+            console.error('Error fetching groups:', error);
             return [];
         }
     }
 
-    async processMessageQueue() {
-        if (this.isProcessingQueue || this.messageQueue.length === 0) return;
-        
-        this.isProcessingQueue = true;
-        
-        while (this.messageQueue.length > 0) {
-            const messageData = this.messageQueue.shift();
-            
-            try {
-                const result = await this.animeBot.processMessage({ body: messageData.text });
-                if (result?.learnedCharacters?.length > 0) {
-                    const responseData = this.animeBot.formatResponse(result);
-                    if (responseData?.text) {
-                        // Apply exponential backoff for rate limiting
-                        const delay = this.animeBot.getExponentialBackoffDelay();
-                        await this.animeBot.sleep(delay);
-                        
-                        await this.sock.sendMessage(messageData.chatId, { text: responseData.text });
-                        this.animeBot.consecutiveFailures = 0; // Reset on success
-                    }
-                }
-            } catch (error) {
-                this.animeBot.consecutiveFailures++;
-                const backoffDelay = this.animeBot.getExponentialBackoffDelay();
-                await this.animeBot.sleep(backoffDelay);
-            }
+    async clearGroupChat(groupId) {
+        try {
+            // Use chatModify to clear all messages in the group
+            await this.sock.chatModify({ clear: 'all' }, groupId);
+        } catch (error) {
+            console.error('Error clearing group chat:', error.message);
         }
-        
-        this.isProcessingQueue = false;
     }
 
     setupMessageHandler() {
         if (this.messageHandler) this.sock.ev.off('messages.upsert', this.messageHandler);
         
         this.messageHandler = async (messageUpdate) => {
-            for (const message of messageUpdate.messages) {
+            // Sort messages by timestamp to process the most recent first
+            const sortedMessages = messageUpdate.messages?.sort((a, b) => 
+                (b.messageTimestamp || 0) - (a.messageTimestamp || 0)
+            ) || [];
+            
+            for (const message of sortedMessages) {
                 const msgContent = message.message?.conversation || message.message?.extendedTextMessage?.text;
+                const messageTimestamp = message.messageTimestamp || 0;
                 
                 if (message.key.fromMe || !msgContent) {
                     continue;
                 }
+
+                const chatId = message.key.remoteJid;
+                const senderNumber = message.key.participant || message.key.remoteJid?.split('@')[0];
+                console.log(`[MSG] From: ${senderNumber} in ${chatId} | Content: ${msgContent}`);
                 
-                const messageId = `${message.key.remoteJid}-${message.key.id}-${message.messageTimestamp}`;
-                if (this.processedMessages.has(messageId)) continue;
+                // Only process messages that are recent (within last 30 seconds) or newer than the last processed message
+                const currentTime = Math.floor(Date.now() / 1000);
+                const messageAge = currentTime - messageTimestamp;
+                
+                if (messageAge > 30 && messageTimestamp <= this.lastMessageTimestamp) {
+                    continue;
+                }
+                
+                const messageId = `${message.key.remoteJid}-${message.key.id}-${messageTimestamp}`;
+                if (this.processedMessages.has(messageId)) {
+                    continue;
+                }
                 
                 this.processedMessages.add(messageId);
+                this.lastMessageTimestamp = Math.max(this.lastMessageTimestamp, messageTimestamp);
+                
                 if (this.processedMessages.size > 200) {
                     this.processedMessages.delete(this.processedMessages.values().next().value);
                 }
                 
-                const chatId = message.key.remoteJid;
-                
                 try {
-                    // Get sender number for owner check
-                    const senderNumber = message.key.participant || message.key.remoteJid?.split('@')[0];
-                    
                     // --- Owner-only Control Logic ---
                     if (msgContent.trim() === '.a' || msgContent.trim() === '.ابدا') {
                         if (!this.isOwner(senderNumber)) {
@@ -421,9 +497,12 @@ class WhatsAppAnimeBot {
                         if (selectedIndex >= 0 && selectedIndex < groups.length) {
                             this.selectedGroup = groups[selectedIndex].id;
                             this.isActive = true;
-                            this.activationTimestamp = message.messageTimestamp; // Set activation timestamp to the message's timestamp (in seconds)
-                            await this.sock.sendMessage(chatId, {
-                                text: `✅ Bot activated in: **${groups[selectedIndex].name}**\n\nNow the bot will only respond in this group.`
+                            
+                            // Clear the group chat
+                            await this.clearGroupChat(this.selectedGroup);
+                            
+                            await this.sock.sendMessage(chatId, { 
+                                text: `✅ Bot activated in: **${groups[selectedIndex].name}**\n\nChat cleared and bot is now active in this group.` 
                             });
                         } else {
                             await this.sock.sendMessage(chatId, { text: '❌ Invalid group number!' });
@@ -439,24 +518,46 @@ class WhatsAppAnimeBot {
                     }
                     
                     // The character detection logic ONLY runs if the bot is active and in the selected group
-                    if (this.isActive && this.selectedGroup && chatId === this.selectedGroup && message.messageTimestamp >= this.activationTimestamp) {
-                        // Ultra clean logging - only show actual messages
-                        console.log(`${message.pushName || chatId.split('@')[0]}: ${msgContent}`);
-                        
-                        // Add to message queue for processing with rate limiting
-                        this.messageQueue.push({
-                            text: msgContent,
-                            chatId: chatId,
-                            timestamp: Date.now()
-                        });
-                        
-                        // Process queue if not already processing
-                        if (!this.isProcessingQueue) {
-                            this.processMessageQueue();
+                    if (!this.isActive) continue;
+                    
+                    // Check if message is from the selected group
+                    if (this.selectedGroup && chatId !== this.selectedGroup) {
+                        continue;
+                    }
+                    
+                    const result = await this.animeBot.processMessage({ body: msgContent });
+                    if (result?.learnedCharacters?.length > 0) {
+                        const responseData = this.animeBot.formatResponse(result);
+                        if (responseData?.text) {
+                            // Pass mistake information to delay calculation
+                            const delay = this.animeBot.getAdaptiveDelay(
+                                responseData.characterCount, 
+                                responseData.isMistake, 
+                                responseData.mistakeType
+                            );
+                            
+                            await this.animeBot.sleep(delay);
+                            await this.sock.sendMessage(chatId, { text: responseData.text });
+                            
+                            if (responseData.isMistake) {
+                                // 50% chance to correct the mistake after a delay
+                                if (this.animeBot.shouldCorrectMistake()) {
+                                    setTimeout(async () => {
+                                        try {
+                                            const correctionText = this.animeBot.generateCorrectionMessage(
+                                                responseData.originalCharacters
+                                            );
+                                            await this.sock.sendMessage(chatId, { text: correctionText });
+                                        } catch (error) {
+                                            console.error('Error sending correction:', error);
+                                        }
+                                    }, 2000 + Math.random() * 1000); // 2-3 seconds delay
+                                }
+                            }
                         }
                     }
                 } catch (error) {
-                    // Silent error handling
+                    console.error('Bot processing error:', error);
                 }
             }
         };
@@ -466,7 +567,6 @@ class WhatsAppAnimeBot {
 
     cleanup() {
         if (this.messageHandler) this.sock.ev.off('messages.upsert', this.messageHandler);
-        this.animeBot.stopHeartbeat();
     }
 
     getStatus() {
