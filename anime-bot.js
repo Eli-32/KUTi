@@ -32,9 +32,12 @@ app.listen(PORT, () => {
 });
 
 console.log('🚀 Starting Anime Character Detector Bot...');
+console.log('Type ".a" to activate the bot and select a group.');
+console.log('Type ".x" to deactivate the bot.');
+console.log('Type ".status" to check the bot\'s current status.');
 
 // Clean session function
-async function cleanupSession() {
+async function cleanupSession(force = false) {
   try {
     const fs = await import('fs');
     const sessionDir = './AnimeSession';
@@ -43,8 +46,17 @@ async function cleanupSession() {
       files.forEach(file => {
         if (file.endsWith('.json')) {
           const filePath = `${sessionDir}/${file}`;
-          fs.unlinkSync(filePath);
-          console.log(`🗑️ Cleaned up session file: ${file}`);
+          if (force) {
+            fs.unlinkSync(filePath);
+            console.log(`🗑️ Force cleaned up session file: ${file}`);
+          } else {
+            const stats = fs.statSync(filePath);
+            // Remove files older than 24 hours
+            if (Date.now() - stats.mtimeMs > 24 * 60 * 60 * 1000) {
+              fs.unlinkSync(filePath);
+              console.log(`🗑️ Cleaned up old session file: ${file}`);
+            }
+          }
         }
       });
     }
@@ -121,7 +133,7 @@ function setupHotReload(sock) {
 
 async function startBot() {
   // Clean up old session files
-  await cleanupSession();
+  await cleanupSession(true); // Force cleanup on startup
   
   // Use multi-file auth state
   const { state, saveCreds } = await useMultiFileAuthState('./AnimeSession');
