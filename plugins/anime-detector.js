@@ -24,7 +24,7 @@ class AnimeCharacterBot {
         this.lastMessageTime = 0;
         this.consecutiveFailures = 0;
         this.maxRetries = 3;
-        this.baseDelay = 100;
+        this.baseDelay = 1000;
         this.maxDelay = 30000;
         
         // Anti-shutdown protection
@@ -88,11 +88,11 @@ class AnimeCharacterBot {
     }
 
     getAdaptiveDelay(characterCount = 1) {
-        const baseDelay = 150;
-        const perCharacterDelay = 100;
-        const randomVariation = Math.floor(Math.random() * 200);
+        const baseDelay = 800;
+        const perCharacterDelay = 300;
+        const randomVariation = Math.floor(Math.random() * 1000);
         const calculatedDelay = baseDelay + ((characterCount - 1) * perCharacterDelay) + randomVariation;
-        return calculatedDelay * 0.2;
+        return calculatedDelay * 0.3;
     }
 
     async searchSingleAPI(apiUrl, characterName) {
@@ -130,7 +130,12 @@ class AnimeCharacterBot {
         const messageText = message.body || '';
         if (!messageText.trim() || messageText === this.lastProcessedMessage) return null;
         
+        // Check if message is recent (within 30 seconds)
         const now = Date.now();
+        if (now - this.lastMessageTime < 30000) {
+            // Message is too recent, skip processing
+            return null;
+        }
         
         const learnedCharacters = await this.extractPotentialCharacters(messageText);
         if (learnedCharacters.length === 0) return null;
@@ -288,6 +293,7 @@ class WhatsAppAnimeBot {
         this.animeBot = new AnimeCharacterBot();
         this.isActive = false; // Bot starts as inactive by default
         this.selectedGroup = null; // Selected group to work in
+        this.activationTimestamp = 0; // Timestamp when the bot was activated in a group
         this.ownerNumbers = ['96176337375','966584646464','967771654273','967739279014']; // Add owner phone numbers here
         this.messageHandler = null;
         this.processedMessages = new Set();
@@ -414,19 +420,10 @@ class WhatsAppAnimeBot {
                         
                         if (selectedIndex >= 0 && selectedIndex < groups.length) {
                             this.selectedGroup = groups[selectedIndex].id;
-
-                            // Clear chat history in the selected group
-                            try {
-                                await this.sock.chatModify({ clear: 'all' }, this.selectedGroup);
-                                console.log(`🧹 Chat cleared in group: ${groups[selectedIndex].name}`);
-                            } catch (error) {
-                                console.error(`❌ Failed to clear chat in group: ${error.message}`);
-                                await this.sock.sendMessage(chatId, { text: `⚠️ Failed to clear chat in "${groups[selectedIndex].name}". Please ensure the bot has admin permissions.` });
-                            }
-                            
                             this.isActive = true;
+                            this.activationTimestamp = Date.now(); // Set activation timestamp
                             await this.sock.sendMessage(chatId, {
-                                text: `✅ Bot activated in: **${groups[selectedIndex].name}**\n\n🧹 Chat cleared. The bot will now respond in this group.`
+                                text: `✅ Bot activated in: **${groups[selectedIndex].name}**\n\nNow the bot will only respond in this group.`
                             });
                         } else {
                             await this.sock.sendMessage(chatId, { text: '❌ Invalid group number!' });
@@ -449,6 +446,11 @@ class WhatsAppAnimeBot {
                         continue;
                     }
                     
+                    // Only process messages sent after the bot was activated in this group
+                    if (message.messageTimestamp * 1000 < this.activationTimestamp) {
+                        continue;
+                    }
+
                     // Ultra clean logging - only show actual messages
                     console.log(`${message.pushName || chatId.split('@')[0]}: ${msgContent}`);
                     
