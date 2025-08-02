@@ -44,7 +44,7 @@ async function cleanupSession(force = false) {
     if (fs.existsSync(sessionDir)) {
       const files = fs.readdirSync(sessionDir);
       files.forEach(file => {
-        if (file.endsWith('.json')) {
+        if (file.endsWith('.json') && file !== 'creds.json') { // Exclude creds.json
           const filePath = `${sessionDir}/${file}`;
           if (force) {
             fs.unlinkSync(filePath);
@@ -132,6 +132,26 @@ function setupHotReload(sock) {
 }
 
 async function startBot() {
+  // Kill any existing Node.js processes before starting
+  try {
+    console.log('Attempting to terminate any existing Node.js processes...');
+    const { exec } = await import('child_process'); // Import exec here
+    await new Promise(resolve => {
+      exec('taskkill /F /IM node.exe', (error, stdout, stderr) => {
+        if (error) {
+          console.log(`No Node.js processes found or error during termination: ${error.message}`);
+        }
+        if (stderr) {
+          console.log(`Taskkill stderr: ${stderr}`);
+        }
+        console.log(`Taskkill stdout: ${stdout}`);
+        resolve();
+      });
+    });
+  } catch (error) {
+    console.error('Error during process termination:', error.message);
+  }
+
   // Clean up old session files
   await cleanupSession(true); // Force cleanup on startup
   
