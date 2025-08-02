@@ -43,12 +43,8 @@ async function cleanupSession() {
       files.forEach(file => {
         if (file.endsWith('.json')) {
           const filePath = `${sessionDir}/${file}`;
-          const stats = fs.statSync(filePath);
-          // Remove files older than 24 hours
-          if (Date.now() - stats.mtimeMs > 24 * 60 * 60 * 1000) {
-            fs.unlinkSync(filePath);
-            console.log(`🗑️ Cleaned up old session file: ${file}`);
-          }
+          fs.unlinkSync(filePath);
+          console.log(`🗑️ Cleaned up session file: ${file}`);
         }
       });
     }
